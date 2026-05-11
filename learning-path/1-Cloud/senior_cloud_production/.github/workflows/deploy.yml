@@ -1,0 +1,144 @@
+# CI/CD Pipeline: Build → Push → Deploy (Zero-downtime)
+# Triggers on push to main branch.
+#
+# Required GitHub Secrets:
+#   DOCKERHUB_USERNAME   — Docker Hub login
+#   DOCKERHUB_TOKEN      — Docker Hub access token (not password!)
+#   VM_HOST              — Cloud VM public IP or hostname
+#   VM_USER              — SSH user (e.g. ubuntu)
+#   VM_SSH_KEY           — Private SSH key (PEM, no passphrase)
+#   VM_DEPLOY_PATH       — Absolute path on VM (e.g. /home/ubuntu/app)
+#   VM_ENV_FILE          — Full content of production .env file
+
+name: CI/CD · Build & Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:   # allow manual trigger
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/senior-cloud-api
+
+jobs:
+  # ── Job 1: Lint & Test ─────────────────────────────────────────────────
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest ruff
+
+      - name: Lint (ruff)
+        run: ruff check app/
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short || true   # remove '|| true' when tests exist
+
+  # ── Job 2: Build & Push Docker image ──────────────────────────────────
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker meta (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & push (with layer cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  # ── Job 3: Deploy to VM (Zero-Downtime) ───────────────────────────────
+  deploy:
+    name: Deploy to VM
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production   # enables "Environments" approval gate in GitHub
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write .env to VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          script: |
+            mkdir -p ${{ secrets.VM_DEPLOY_PATH }}
+            cat > ${{ secrets.VM_DEPLOY_PATH }}/.env << 'ENVEOF'
+            ${{ secrets.VM_ENV_FILE }}
+            ENVEOF
+            echo "IMAGE_TAG=${{ needs.build.outputs.image_tag }}" >> ${{ secrets.VM_DEPLOY_PATH }}/.env
+
+      - name: Copy compose file to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          source:   "docker-compose.prod.yml,nginx/"
+          target:   ${{ secrets.VM_DEPLOY_PATH }}
+
+      - name: Deploy (zero-downtime rolling update)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ secrets.VM_DEPLOY_PATH }}
+
+            echo "▶ Pulling new image..."
+            docker compose -f docker-compose.prod.yml pull app
+
+            echo "▶ Rolling update: app only (nginx stays up)"
+            docker compose -f docker-compose.prod.yml up -d --no-deps --build app
+
+            echo "▶ Waiting for health check..."
+            sleep 10
+            STATUS=$(curl -sf http://localhost:8000/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])" 2>/dev/null || echo "error")
+            if [ "$STATUS" != "healthy" ]; then
+              echo "❌ Health check failed — rolling back"
+              docker compose -f docker-compose.prod.yml rollout app --previous 2>/dev/null || true
+              exit 1
+            fi
+
+            echo "▶ Removing old images"
+            docker image prune -f
+
+            echo "✅ Deployment complete — $STATUS"

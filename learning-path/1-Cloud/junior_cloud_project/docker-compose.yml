@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  api:
+    build: .                      # собрать образ из Dockerfile в текущей папке
+    container_name: fastapi_app
+    ports:
+      - "80:80"                   # хост:контейнер
+    restart: unless-stopped       # автоперезапуск при падении / перезагрузке сервера
+    environment:
+      - PYTHONUNBUFFERED=1        # логи сразу в консоль без буферизации

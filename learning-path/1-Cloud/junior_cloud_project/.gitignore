@@ -1,0 +1,25 @@
+# Секреты — НИКОГДА не коммитим
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ZIP-архив проекта
+junior_cloud_project.zip

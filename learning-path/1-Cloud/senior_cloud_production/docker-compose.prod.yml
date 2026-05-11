@@ -1,0 +1,125 @@
+# Production Docker Compose
+# Services: PostgreSQL · FastAPI · Nginx (SSL) · Certbot · Dozzle (logs UI)
+#
+# Zero-downtime update strategy:
+#   docker compose -f docker-compose.prod.yml up -d --no-deps --build app
+# This rebuilds only the app container while nginx keeps serving.
+
+version: "3.9"
+
+networks:
+  frontend:   # nginx ↔ internet
+    driver: bridge
+  backend:    # app ↔ db (isolated, not exposed)
+    driver: bridge
+
+volumes:
+  postgres_data:
+  certbot_conf:    # /etc/letsencrypt
+  certbot_www:     # ACME challenge webroot
+  nginx_logs:
+  app_logs:
+
+services:
+
+  # ── PostgreSQL 15 ────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: pg_db
+    restart: always
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    # Port 5432 intentionally NOT exposed to host
+
+  # ── FastAPI Application ──────────────────────────────────────────────────
+  app:
+    image: ${DOCKER_IMAGE:-senior-cloud-api}:${IMAGE_TAG:-latest}
+    container_name: fastapi_app
+    restart: always
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    networks:
+      - backend
+      - frontend
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app_logs:/app/logs
+    # Port 8000 NOT exposed to host — only Nginx talks to it
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── Nginx Reverse Proxy + SSL Termination ────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx_proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - frontend
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - certbot_conf:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # ── Certbot (Let's Encrypt) ──────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    restart: unless-stopped
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Auto-renew: runs every 12h, renews certs expiring in < 30 days
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done;"
+
+  # ── Dozzle — real-time log viewer (lightweight, no data stored) ──────────
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle_logs
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # bind to localhost only — access via SSH tunnel
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      DOZZLE_LEVEL: info
+      DOZZLE_TAILSIZE: 300
+      DOZZLE_USERNAME: ${DOZZLE_USER:-admin}
+      DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:-changeme}
+    networks:
+      - frontend
