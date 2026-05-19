@@ -1,0 +1,88 @@
+version: "3.9"
+
+# ── Shared network ────────────────────────────────────────────────────────
+networks:
+  observability:
+    driver: bridge
+
+# ── Named volumes ─────────────────────────────────────────────────────────
+volumes:
+  prometheus_data: {}
+  app_logs:        {}
+
+# ══════════════════════════════════════════════════════════════════════════
+services:
+
+  # ── FastAPI Application ────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: fastapi_observability_api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - app_logs:/app/logs
+    networks:
+      - observability
+    restart: on-failure:3
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout:  5s
+      retries:  3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512M"
+        reservations:
+          cpus: "0.25"
+          memory: "128M"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        # Labels consumed by Vector / Fluentbit:
+        labels: "service,environment"
+
+  # ── Prometheus ────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - observability
+    restart: on-failure:3
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "384M"     # hard cap — protects host RAM
+        reservations:
+          cpus: "0.1"
+          memory: "128M"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

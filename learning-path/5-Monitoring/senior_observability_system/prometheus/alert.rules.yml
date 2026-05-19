@@ -1,0 +1,48 @@
+# Prometheus Alerting Rules
+# These fire via Alertmanager → Slack / PagerDuty in production.
+# For local dev: alerts are visible in Prometheus UI → Alerts tab.
+
+groups:
+  - name: fastapi_observability_alerts
+    interval: 30s
+    rules:
+
+      # ── High error rate (5xx) ─────────────────────────────────────────
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1m]))
+            /
+            sum(rate(http_requests_total[1m]))
+          ) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx error rate (> 5%)"
+          description: >
+            Error rate is {{ $value | humanizePercentage }} over the last minute.
+
+      # ── High P99 latency ──────────────────────────────────────────────
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path)
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 latency > 500ms"
+          description: >
+            Path {{ $labels.path }} P99 latency is
+            {{ $value | humanizeDuration }}.
+
+      # ── Service down ──────────────────────────────────────────────────
+      - alert: ServiceDown
+        expr: up{job="fastapi-observability"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "FastAPI observability service is down"
