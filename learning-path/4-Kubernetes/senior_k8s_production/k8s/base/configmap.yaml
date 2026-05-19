@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-config
+  namespace: rag-system
+  labels:
+    app: rag-system
+data:
+  APP_ENV:            "production"
+  PG_HOST:            "postgres-svc"
+  PG_PORT:            "5432"
+  PG_DB:              "ragdb"
+  PG_USER:            "raguser"
+  REDIS_URL:          "redis://:$(REDIS_PASSWORD)@redis-svc:6379/0"
+  CACHE_TTL_SECONDS:  "120"
+  LOG_LEVEL:          "info"

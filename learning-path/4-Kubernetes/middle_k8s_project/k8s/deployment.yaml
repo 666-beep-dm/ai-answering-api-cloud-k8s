@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-app
+  labels:
+    app: fastapi-app
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: fastapi-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # zero-downtime rollout
+  template:
+    metadata:
+      labels:
+        app: fastapi-app
+        tier: backend
+    spec:
+      # ── Security: drop root privileges ──────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:  1000
+        runAsGroup: 1000
+        fsGroup:    1000
+
+      containers:
+        - name: fastapi-app
+          image: my-fastapi-app:latest
+          imagePullPolicy: Never     # use local image (minikube / Docker Desktop)
+          ports:
+            - containerPort: 8000
+
+          # ── Container-level security ────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          # ── Environment: non-sensitive values from ConfigMap ────────────
+          envFrom:
+            - configMapRef:
+                name: fastapi-app-config
+
+          # ── Environment: sensitive values from Secret ───────────────────
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fastapi-app-secret
+                  key: DATABASE_PASSWORD
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fastapi-app-secret
+                  key: SECRET_KEY
+
+          # ── Resource limits (laptop-friendly) ──────────────────────────
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+
+          # ── Probes ──────────────────────────────────────────────────────
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+
+          # writable temp dir required when readOnlyRootFilesystem=true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}

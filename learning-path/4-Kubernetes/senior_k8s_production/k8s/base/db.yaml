@@ -1,0 +1,107 @@
+# ── PostgreSQL PersistentVolumeClaim ─────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: rag-system
+  labels:
+    app: postgres
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ── PostgreSQL Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: rag-system
+  labels:
+    app: postgres
+    tier: storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  strategy:
+    type: Recreate             # single-replica DB — Recreate avoids PVC conflicts
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: storage
+    spec:
+      securityContext:
+        runAsUser:  999        # postgres uid inside official image
+        runAsGroup: 999
+        fsGroup:    999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: PG_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: PG_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: PG_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu:    "200m"
+              memory: "256Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "raguser", "-d", "ragdb"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "raguser", "-d", "ragdb"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+# ── PostgreSQL Service ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-svc
+  namespace: rag-system
+  labels:
+    app: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
