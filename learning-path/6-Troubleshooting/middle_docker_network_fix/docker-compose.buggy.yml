@@ -1,0 +1,56 @@
+# ══════════════════════════════════════════════════════════════════════
+# docker-compose.buggy.yml  ❌  BUG SCENARIO
+# ══════════════════════════════════════════════════════════════════════
+# Two intentional mistakes:
+#   1. DB_HOST=localhost  → resolves to the container's own loopback,
+#      not the 'db' service. Causes: "Name or service not known" or
+#      "Connection refused".
+#   2. No healthcheck on 'db' + no depends_on condition  → 'web'
+#      starts before PostgreSQL has finished initializing, causing
+#      transient connection failures even if the host were correct.
+# ══════════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+networks:
+  backend:
+    driver: bridge
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: pg_debug_buggy
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: appdb
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    # ❌ NO healthcheck → PostgreSQL may still be initializing
+    #    when 'web' tries to connect
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastapi_debug_buggy
+    ports:
+      - "8000:8000"
+    environment:
+      # ❌ BUG: localhost resolves to the container itself, not the db service
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: appdb
+      LOG_LEVEL: INFO
+      APP_ENV: development
+    networks:
+      - backend
+    depends_on:
+      - db   # ❌ Only waits for container START, not for PG to be READY
+
+volumes:
+  pg_data:

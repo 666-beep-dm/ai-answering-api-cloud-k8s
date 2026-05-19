@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  debug-stand:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastapi_debug_stand
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Переопределить через .env или напрямую здесь
+      BUG_MODE: ${BUG_MODE:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

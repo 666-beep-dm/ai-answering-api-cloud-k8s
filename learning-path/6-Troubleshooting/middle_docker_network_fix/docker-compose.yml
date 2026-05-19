@@ -1,0 +1,62 @@
+# ══════════════════════════════════════════════════════════════════════
+# docker-compose.yml  ✅  FIXED SCENARIO
+# ══════════════════════════════════════════════════════════════════════
+# Two fixes applied:
+#   1. DB_HOST=db  → resolves to the 'db' service inside Docker network
+#   2. healthcheck on 'db' + depends_on condition: service_healthy
+#      → 'web' only starts after pg_isready confirms PG is accepting
+#        connections
+# ══════════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+networks:
+  backend:
+    driver: bridge
+    # 'db' is on the internal network only — no host port exposed (security)
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: pg_debug_fixed
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-appdb}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    # ✅ FIX 2: healthcheck using pg_isready
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-appdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Security: db port NOT exposed to host machine
+    # ports:  ← intentionally absent
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastapi_debug_fixed
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # ✅ FIX 1: use Docker service name, not localhost
+      DB_HOST: ${DB_HOST:-db}
+    networks:
+      - backend
+    # ✅ FIX 2: wait until PostgreSQL healthcheck passes
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  pg_data:
+    driver: local
