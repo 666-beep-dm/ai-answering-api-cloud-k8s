@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  upload_service:
+    build: .
+    container_name: file_upload_service
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    environment:
+      - UPLOAD_DIR=uploads
+    env_file:
+      - .env
+
+volumes:
+  uploads_data:
+    driver: local
