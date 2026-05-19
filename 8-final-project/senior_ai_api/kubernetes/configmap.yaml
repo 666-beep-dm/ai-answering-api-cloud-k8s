@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-api-config
+  namespace: default
+data:
+  APP_ENV: "production"
+  OPENAI_MODEL: "gpt-4o-mini"
+  POSTGRES_HOST: "postgres-svc"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "ai_api"
+  REDIS_URL: "redis://redis-svc:6379/0"
+  QDRANT_HOST: "qdrant-svc"
+  QDRANT_PORT: "6333"
+  LOG_LEVEL: "INFO"

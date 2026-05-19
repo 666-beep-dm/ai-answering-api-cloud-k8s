@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-api-svc
+  namespace: default
+spec:
+  type: ClusterIP
+  selector: { app: ai-api }
+  ports: [{ port: 80, targetPort: 8000 }]
