@@ -1,0 +1,77 @@
+# k8s/target/deployment.yaml
+# AUDIT TARGET: Kubernetes манифест с критическими проблемами
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-api
+  namespace: default
+spec:
+  replicas: 1                          # SCALE: нет HPA, жёстко 1 реплика
+  selector:
+    matchLabels:
+      app: rag-api
+  template:
+    metadata:
+      labels:
+        app: rag-api
+    spec:
+      # SEC: нет securityContext, контейнер запускается от root
+      containers:
+        - name: rag-api
+          image: rag-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            # SEC: КРИТИЧНО — секреты прямо в манифесте (попадут в git!)
+            - name: OPENAI_API_KEY
+              value: "sk-hardcoded-openai-key-prod-1234"
+            - name: POSTGRES_URL
+              value: "postgresql://admin:admin123@db:5432/ragdb"
+            - name: REDIS_URL
+              value: "redis://:hardcoded_redis_pass@redis:6379"
+          # RESILIENCE: нет livenessProbe, readinessProbe
+          # SCALE: нет resources limits/requests — pod может забрать весь CPU узла
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          # RESILIENCE: нет Persistent Volume — данные теряются при рестарте пода!
+          # нет limits, нет probes
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_PASSWORD
+              value: "admin123"           # SEC: пароль в манифесте
+          # RESILIENCE: нет PersistentVolumeClaim — БД теряет данные при рестарте!

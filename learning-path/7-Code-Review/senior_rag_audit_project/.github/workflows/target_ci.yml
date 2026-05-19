@@ -1,0 +1,32 @@
+# .github/workflows/target_ci.yml — AUDIT TARGET: спагетти CI/CD
+name: Build and Deploy (BROKEN)
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # MAINT: нет этапа линтинга
+      # MAINT: нет этапа тестов
+      # SEC: образ собирается и пушится при ЛЮБОМ пуше в любую ветку
+
+      - name: Build Docker image
+        run: |
+          # SEC: ключ в команде (попадёт в лог CI!)
+          docker build -t rag-api:latest \
+            --build-arg OPENAI_KEY=sk-hardcoded-openai-key-prod-1234 .
+
+      - name: Push to registry
+        run: |
+          docker login -u admin -p password123 registry.example.com
+          docker push registry.example.com/rag-api:latest
+
+      # MAINT: нет разделения на dev/staging/prod
+      # MAINT: нет approval gates перед деплоем в prod
+      - name: Deploy to production
+        run: |
+          ssh prod-server "docker pull rag-api:latest && docker-compose up -d"
+          # RESILIENCE: нет smoke-теста после деплоя

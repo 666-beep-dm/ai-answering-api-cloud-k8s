@@ -1,0 +1,33 @@
+# docker-compose.target.yml — AUDIT TARGET (проблемная конфигурация)
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: target_service/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # SEC: секреты в docker-compose — попадут в git!
+      OPENAI_API_KEY: "sk-hardcoded-openai-key-prod-1234"
+      POSTGRES_URL: "postgresql://admin:admin123@db:5432/ragdb"
+      REDIS_URL: "redis://:hardcoded_redis_pass@redis:6379"
+    depends_on:
+      - db
+      - redis
+    # RESILIENCE: нет healthcheck, нет restart policy
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"    # SEC: Redis открыт наружу!
+    # RESILIENCE: нет volumes — данные теряются при рестарте!
+
+  db:
+    image: postgres:16
+    ports:
+      - "5432:5432"    # SEC: PostgreSQL открыт наружу!
+    environment:
+      POSTGRES_PASSWORD: "admin123"   # SEC: пароль в файле
+    # RESILIENCE: нет volumes — БД теряет данные при рестарте!

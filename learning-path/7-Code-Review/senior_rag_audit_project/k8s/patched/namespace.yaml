@@ -1,0 +1,8 @@
+# k8s/patched/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rag-prod
+  labels:
+    name: rag-prod
+    environment: production

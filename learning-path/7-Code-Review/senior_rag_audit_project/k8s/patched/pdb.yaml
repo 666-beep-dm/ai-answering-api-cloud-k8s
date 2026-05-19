@@ -1,0 +1,12 @@
+# k8s/patched/pdb.yaml
+# RESILIENCE: Pod Disruption Budget — минимум 1 под всегда доступен
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rag-api-pdb
+  namespace: rag-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: rag-api

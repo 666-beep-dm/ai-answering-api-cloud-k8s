@@ -1,0 +1,134 @@
+# k8s/patched/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-api
+  namespace: rag-prod
+  labels:
+    app: rag-api
+    version: "1.0"
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: rag-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      # SEC: непривилегированный пользователь
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+      # SCALE: TopologySpreadConstraints для распределения по узлам
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: rag-api
+      containers:
+        - name: rag-api
+          image: your-registry/rag-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # SEC: секреты из K8s Secret, не из манифеста
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: OPENAI_API_KEY
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: REDIS_URL
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: DATABASE_URL
+            # Non-secret config из ConfigMap
+            - name: OPENAI_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-config
+                  key: OPENAI_MODEL
+          # RESILIENCE: Liveness + Readiness пробы
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          # SCALE: корректные лимиты ресурсов (адаптировано под 16GB RAM)
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          # SEC: read-only root filesystem
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# SCALE: Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rag-api-hpa
+  namespace: rag-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rag-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

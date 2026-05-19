@@ -1,0 +1,122 @@
+# docker-compose.patched.yml — Production-Ready (локальный запуск)
+version: "3.9"
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true          # SEC: изолированная сеть
+
+volumes:
+  redis_data:
+  postgres_data:
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: patched_service/Dockerfile
+      target: runtime
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: patched_service/Dockerfile
+      target: runtime
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - .env
+    networks:
+      - backend
+    depends_on:
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data     # RESILIENCE: persistent данные
+    networks:
+      - backend
+    # SEC: не публикует порты наружу
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 128M
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # RESILIENCE: persistent
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    networks:
+      - backend
+    # SEC: не публикует порты наружу
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+          memory: 256M
+
+  # OBS: Prometheus + Grafana для метрик
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    networks:
+      - frontend
+    restart: unless-stopped

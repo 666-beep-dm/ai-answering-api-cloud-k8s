@@ -1,0 +1,15 @@
+# k8s/patched/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-config
+  namespace: rag-prod
+data:
+  OPENAI_MODEL: "gpt-4o"
+  OPENAI_MAX_TOKENS: "2048"
+  SEMANTIC_CACHE_THRESHOLD: "0.92"
+  CELERY_MAX_TASKS_PER_CHILD: "100"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  OTEL_SERVICE_NAME: "rag-api"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"

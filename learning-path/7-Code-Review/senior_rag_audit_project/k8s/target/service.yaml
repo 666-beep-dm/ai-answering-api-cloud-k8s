@@ -1,0 +1,25 @@
+# k8s/target/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-api
+spec:
+  type: LoadBalancer                # COST: LoadBalancer для dev — дорого
+  selector:
+    app: rag-api
+  ports:
+    - port: 80
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+# SEC: Redis Service без NetworkPolicy — доступен всем подам в namespace

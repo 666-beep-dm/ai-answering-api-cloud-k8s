@@ -1,0 +1,69 @@
+# k8s/patched/redis.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: rag-prod
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secrets
+                  key: REDIS_PASSWORD
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+          # RESILIENCE: Persistent Volume
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  # RESILIENCE: PVC для сохранения данных при рестарте
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: rag-prod
+spec:
+  type: ClusterIP            # изолирован внутри кластера
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
